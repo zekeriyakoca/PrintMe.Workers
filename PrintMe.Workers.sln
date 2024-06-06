@@ -1,6 +1,6 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PrintMe.Workers", "PrintMe.Workers\PrintMe.Workers.csproj", "{F57D4B30-AC5E-49C1-A86B-57F6297C612B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PrintMe.Workers", "PrintMe.Workers.csproj", "{F57D4B30-AC5E-49C1-A86B-57F6297C612B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
