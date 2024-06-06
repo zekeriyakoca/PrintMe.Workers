@@ -18,6 +18,10 @@ namespace PrintMe.Workers
 
         public static IHostBuilder CreateHostBuilder(string[] args) =>
             Host.CreateDefaultBuilder(args)
+                .ConfigureAppConfiguration((hostingContext, config) =>
+                {
+                    config.AddJsonFile($"appsettings.Development.json", optional: true);
+                })
                 .ConfigureServices((context, services) =>
                 {
                     string sqlConnectionString = context.Configuration["SqlConnectionString"];
@@ -26,9 +30,9 @@ namespace PrintMe.Workers
                         options.UseSqlServer(sqlConnectionString));
 
                     services.AddSingleton(new ComputerVisionClient(new ApiKeyServiceClientCredentials(
-                        Environment.GetEnvironmentVariable("CognitiveServicesSubscriptionKey")))
+                        context.Configuration["CognitiveServicesSubscriptionKey"]))
                     {
-                        Endpoint = Environment.GetEnvironmentVariable("CognitiveServicesEndpoint")
+                        Endpoint = context.Configuration["CognitiveServicesEndpoint"]
                     });
 
                     services.AddSingleton(new BlobServiceClient(context.Configuration["StorageConnectionString"]));

@@ -1,13 +1,17 @@
-using System.Drawing;
+using System.ClientModel;
 using Azure.Storage.Blobs;
-using Emgu.CV;
-using Emgu.CV.CvEnum;
-using Emgu.CV.Structure;
-using Emgu.CV.Util;
 using Microsoft.Azure.CognitiveServices.Vision.ComputerVision;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using PrintMe.Workers.Models;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Drawing.Processing;
+using System.IO;
+using System.Text;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
+using OpenAI;
 
 namespace PrintMe.Workers;
 
@@ -18,15 +22,19 @@ public class Worker : BackgroundService
     private readonly ComputerVisionClient _computerVisionClient;
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly BlobServiceClient _blobServiceClient;
+    private readonly string _openAIApiKey;
+    private readonly HttpClient _httpClient;
 
     public Worker(ILogger<Worker> logger, IHttpClientFactory httpClientFactory, ComputerVisionClient computerVisionClient, IServiceScopeFactory serviceScopeFactory,
-        BlobServiceClient blobServiceClient)
+        BlobServiceClient blobServiceClient, IHttpClientFactory factory, IConfiguration configuration)
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
         _computerVisionClient = computerVisionClient;
         _serviceScopeFactory = serviceScopeFactory;
         _blobServiceClient = blobServiceClient;
+        _httpClient = factory.CreateClient();
+        _openAIApiKey = configuration["OpenAIKey"];
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -40,16 +48,17 @@ public class Worker : BackgroundService
 
             await Run(JsonConvert.SerializeObject(new QueueMessage()
             {
-                ImageUrl = "https://media.allure.com/photos/65d8f1e8e923c6a4feaf9a02/4:3/w_2664,h_1998,c_limit/dua%20lipa.jpg",
+                ImageUrl =
+                    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Vincent_van_Gogh_-_Self-Portrait_-_Google_Art_Project.jpg/1200px-Vincent_van_Gogh_-_Self-Portrait_-_Google_Art_Project.jpg",
                 MockupTemplates = new List<MockupTemplate>
                 {
                     new MockupTemplate
                     {
-                        TemplateImageUrl = "https://as2.ftcdn.net/v2/jpg/03/09/71/15/1000_F_309711557_EeuDwldG8Sqcc6nvDvn1rsRD4oB67eCB.jpg",
-                        X = 100,
-                        Y = 100,
-                        Width = 500,
-                        Height = 500
+                        TemplateImageUrl = "https://genstorageaccount3116.blob.core.windows.net/print-me-product-images/pexels-thought-catalog-317580-2401863.jpg",
+                        X = 855,
+                        Y = 1292,
+                        Width = 2168 - 855,
+                        Height = 2941 - 1292
                     }
                 }
             }));
@@ -63,6 +72,7 @@ public class Worker : BackgroundService
         {
             _logger.LogInformation($"C# Queue trigger function processed: {queueMessage}");
 
+            var imageId = Guid.NewGuid().ToString();
             var message = JsonConvert.DeserializeObject<QueueMessage>(queueMessage);
             var templateObject = message.MockupTemplates[0];
             var originalImageUrl = message.ImageUrl;
@@ -73,21 +83,26 @@ public class Worker : BackgroundService
             var targetArea = new Rectangle(templateObject.X, templateObject.Y, templateObject.Width, templateObject.Height);
             var resultImage = CreateMockup(templateImage, originalImage, targetArea);
 
-            var resizedResultImage = resultImage.Resize(1000, 1000, Inter.Linear);
-            var thumbnailResultImage = resizedResultImage.Resize(100, 100, Inter.Linear);
+            var resizedImage = originalImage.Clone(ctx => ctx.Resize(1000, originalImage.Height * 1000 / originalImage.Width));
+            var thumbnailImage = resizedImage.Clone(ctx => ctx.Resize(200, resizedImage.Height * 200 / resizedImage.Width));
+            var resizedResultImage = resultImage.Clone(ctx => ctx.Resize(1000, resultImage.Height * 1000 / resultImage.Width));
+            var thumbnailResultImage = resizedResultImage.Clone(ctx => ctx.Resize(200, resizedResultImage.Height * 200 / resizedResultImage.Width));
 
-            var description = await DescribeImage(originalImageUrl);
+            var imageDefinition = await DescribeImage(originalImageUrl);
 
-            string resultImageUrl = await UploadImage(resizedResultImage, "printme-processed-images");
-            string thumbnailUrl = await UploadImage(thumbnailResultImage, "printme-processed-images-thumbnails");
+            string resultImageUrl = await UploadImage(resizedResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup");
+            string thumbnailResultImageUrl = await UploadImage(thumbnailResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup-thumbnail");
+            string ImageUrl = await UploadImage(resizedImage, $"printme-processed-images", imageId, $"{imageId}");
+            string thumbnailUrl = await UploadImage(thumbnailImage, $"printme-processed-images", imageId, $"{imageId}-thumbnail");
 
             var product = new Product
             {
                 OriginalImageUrl = originalImageUrl,
-                TemplateImageUrl = templateObject.TemplateImageUrl,
-                ResultImageUrl = resultImageUrl,
+                ImageUrl = ImageUrl,
                 ThumbnailUrl = thumbnailUrl,
-                Name = description
+                MockupImageUrl = resultImageUrl,
+                MockupThumbnailUrl = thumbnailResultImageUrl,
+                Name = imageDefinition.Title
             };
 
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -97,55 +112,59 @@ public class Worker : BackgroundService
         }
     }
 
-    private async Task<Image<Bgr, byte>> DownloadImage(string url)
+    private async Task<Image<Rgba32>> DownloadImage(string url)
     {
         var client = _httpClientFactory.CreateClient();
         var response = await client.GetAsync(url);
         response.EnsureSuccessStatusCode();
         var imageStream = await response.Content.ReadAsStreamAsync();
-        return new Image<Bgr, byte>(new Bitmap(imageStream).ToMat());
+        return await Image.LoadAsync<Rgba32>(imageStream);
     }
 
-    private Image<Bgr, byte> CreateMockup(Image<Bgr, byte> templateImage, Image<Bgr, byte> sourceImage, Rectangle targetArea)
+    private Image<Rgba32> CreateMockup(Image<Rgba32> templateImage, Image<Rgba32> sourceImage, Rectangle targetArea)
     {
-        var resizedSource = sourceImage.Resize(targetArea.Width, targetArea.Height, Inter.Linear);
-        templateImage.ROI = targetArea;
-        resizedSource.CopyTo(templateImage);
-        templateImage.ROI = Rectangle.Empty;
+        var resizedSource = ResizeAndCrop(sourceImage, targetArea); // sourceImage.Clone(ctx => ctx.Resize(targetArea.Width, targetArea.Height));
+        templateImage.Mutate(ctx => ctx.DrawImage(resizedSource, targetArea.Location, 1f));
         return templateImage;
     }
 
-    private Image<Bgr, byte> CreateMockup(Image<Bgr, byte> templateImage, Image<Bgr, byte> sourceImage, PointF[] targetCorners)
+    private Image<Rgba32> ResizeAndCrop(Image<Rgba32> sourceImage, Rectangle targetArea)
     {
-        // Define the source points (corners of the source image)
-        PointF[] sourcePoints = new PointF[]
+        // Calculate the aspect ratio of the target area
+        float targetAspectRatio = (float)targetArea.Width / targetArea.Height;
+        float sourceAspectRatio = (float)sourceImage.Width / sourceImage.Height;
+
+        // Determine the new dimensions while maintaining the aspect ratio
+        int newWidth, newHeight;
+        if (sourceAspectRatio > targetAspectRatio)
         {
-            new PointF(0, 0),
-            new PointF(sourceImage.Width - 1, 0),
-            new PointF(sourceImage.Width - 1, sourceImage.Height - 1),
-            new PointF(0, sourceImage.Height - 1)
-        };
+            // Source is wider than target aspect ratio
+            newHeight = targetArea.Height;
+            newWidth = (int)(sourceImage.Width * ((float)targetArea.Height / sourceImage.Height));
+        }
+        else
+        {
+            // Source is taller than target aspect ratio
+            newWidth = targetArea.Width;
+            newHeight = (int)(sourceImage.Height * ((float)targetArea.Width / sourceImage.Width));
+        }
 
-        // Calculate the perspective transformation matrix
-        Mat transformMatrix = CvInvoke.GetPerspectiveTransform(sourcePoints, targetCorners);
+        // Resize the source image
+        var resizedImage = sourceImage.Clone(ctx => ctx.Resize(newWidth, newHeight));
 
-        // Warp the source image to fit the target polygon
-        Image<Bgr, byte> warpedImage = new Image<Bgr, byte>(templateImage.Width, templateImage.Height);
-        CvInvoke.WarpPerspective(sourceImage, warpedImage, transformMatrix, new Size(templateImage.Width, templateImage.Height));
+        // Calculate the crop rectangle to center the target area
+        int cropX = (newWidth - targetArea.Width) / 2;
+        int cropY = (newHeight - targetArea.Height) / 2;
+        var cropRectangle = new Rectangle(cropX, cropY, targetArea.Width, targetArea.Height);
 
-        // Create a mask for the target polygon
-        Mat mask = new Mat(templateImage.Size, DepthType.Cv8U, 1);
-        mask.SetTo(new MCvScalar(0));
-        VectorOfPointF polygon = new VectorOfPointF(targetCorners);
-        CvInvoke.FillConvexPoly(mask, polygon, new MCvScalar(255));
+        // Crop the resized image
+        var croppedImage = resizedImage.Clone(ctx => ctx.Crop(cropRectangle));
 
-        // Use the mask to copy the warped image onto the template
-        CvInvoke.BitwiseAnd(warpedImage, warpedImage, templateImage, mask);
-
-        return templateImage;
+        return croppedImage;
     }
 
-    private async Task<string> DescribeImage(string imageUrl)
+
+    private async Task<string> DescribeImageWithComputerVision(string imageUrl)
     {
         var descriptionResult = await _computerVisionClient.DescribeImageAsync(imageUrl);
         if (descriptionResult.Captions.Count > 0)
@@ -156,17 +175,92 @@ public class Worker : BackgroundService
         return "No description available";
     }
 
-    private async Task<string> UploadImage(Image<Bgr, byte> image, string containerName)
+    public async Task<ImageDefinition> DescribeImage(string imageUrl)
+    {
+        var prompt = $@"
+        Given the image URL: {imageUrl}, return a JSON object with the following structure:
+        {{
+            ""Painter"": ""<Name of the painter if known, otherwise null>"",
+            ""Title"": ""<Name or Title of the painting>"",
+            ""Description"": ""<A detailed description of the painting>"",
+            ""Category"": <Category number corresponding to the following Enum: 
+            public enum CategoryEnum : long
+            {{
+                None = 0,
+                NaturePrints = 1 << 0,
+                Botanical = 1 << 1,
+                Animals = 1 << 2,
+                SpaceAndAstronomy = 1 << 3,
+                MapsAndCities = 1 << 4,
+                Nature = NaturePrints | Botanical | Animals | SpaceAndAstronomy | MapsAndCities,
+                RetroAndVintage = 1 << 7,
+                BlackAndWhite = 1 << 8,
+                GoldAndSilver = 1 << 9,
+                HistoricalPrints = 1 << 10,
+                ClassicPosters = 1 << 11,
+                VintageAndRetro = RetroAndVintage | BlackAndWhite | GoldAndSilver | HistoricalPrints | ClassicPosters,
+                Illustrations = 1 << 14,
+                Photographs = 1 << 15,
+                ArtPrints = 1 << 16,
+                TextPosters = 1 << 17,
+                Graphical = 1 << 18,
+                ArtStyles = Illustrations | Photographs | ArtPrints | TextPosters | Graphical,
+                FamousPainters = 1 << 21,
+                IconicPhotos = 1 << 22,
+                StudioCollections = 1 << 23,
+                ModernArtists = 1 << 24,
+                AbstractArt = 1 << 25,
+                FamousPaintersCategory = FamousPainters | IconicPhotos | StudioCollections | ModernArtists | AbstractArt
+            }}
+            For example, category should be  1 for NaturePrints 3 for botanical 5 for Animals>
+        }}";
+
+        var requestBody = new
+        {
+            model = "gpt-3.5-turbo-instruct",
+            prompt = prompt,
+            max_tokens = 500,
+            temperature = 0.3
+        };
+
+        var requestContent = new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json");
+
+        _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_openAIApiKey}");
+
+        // var response = await _httpClient.PostAsync("https://api.openai.com/v1/completions", requestContent);
+        // var responseContent = await response.Content.ReadAsStringAsync();
+        var responseContent =
+            "{\"id\":\"cmpl-9XGsWWbKSyBSyRbxpnB3hav1KAxdT\",\"object\":\"text_completion\",\"created\":1717716732,\"model\":\"gpt-3.5-turbo-instruct\",\"choices\":[{\"text\":\"\\n        {\\n            \\\"Painter\\\": \\\"Vincent van Gogh\\\",\\n            \\\"Title\\\": \\\"Self-Portrait\\\",\\n            \\\"Description\\\": \\\"Self-Portrait is an oil on canvas painting by the Dutch post-impressionist painter Vincent van Gogh. The painting depicts the artist's face in a green coat with a fur collar, against a background of dark brown and green. It was painted in September 1889 in Saint-R\\u00e9my-de-Provence, France, and is one of several self-portraits that Van Gogh painted during his stay at the asylum there.\\\",\\n            \\\"Category\\\": 3\\n        }\",\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":473,\"completion_tokens\":128,\"total_tokens\":601}}";
+
+        var completionResponse = JsonConvert.DeserializeObject<CompletionResponse>(responseContent);
+
+        if (completionResponse.Choices.Count > 0)
+        {
+            try
+            {
+                return JsonConvert.DeserializeObject<ImageDefinition>(completionResponse.Choices[0].Text.Trim());
+            }
+            catch
+            {
+                _logger.LogError("Unable to parse JSON response of openAI model: {responseContent}", completionResponse);
+            }
+        }
+
+        return new ImageDefinition();
+    }
+
+
+    private async Task<string> UploadImage(Image<Rgba32> image, string containerName, string blogFolder, string imageName)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         await containerClient.CreateIfNotExistsAsync();
 
-        var blobName = Guid.NewGuid().ToString() + ".jpg";
+        var blobName = blogFolder + "/" + imageName + ".jpg";
         var blobClient = containerClient.GetBlobClient(blobName);
 
         using (var ms = new MemoryStream())
         {
-            image.ToBitmap().Save(ms, System.Drawing.Imaging.ImageFormat.Jpeg);
+            await image.SaveAsJpegAsync(ms);
             ms.Position = 0;
             await blobClient.UploadAsync(ms, true);
         }
