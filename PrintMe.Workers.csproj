@@ -10,6 +10,7 @@
 
     <ItemGroup>
         <PackageReference Include="Azure.Storage.Blobs" Version="12.20.0" />
+        <PackageReference Include="Azure.Storage.Queues" Version="12.18.0" />
         <PackageReference Include="Emgu.CV" Version="4.9.0.5494" />
         <PackageReference Include="Emgu.CV.Bitmap" Version="4.9.0.5494" />
         <PackageReference Include="Microsoft.Azure.CognitiveServices.Vision.ComputerVision" Version="7.0.1" />

@@ -4,6 +4,7 @@ namespace PrintMe.Workers.Models;
 
 public class MockupTemplate
 {
+    public int Id { get; set; }
     public string TemplateImageUrl { get; set; }
     public Point[] Corners { get; set; }
     public int X { get; set; }

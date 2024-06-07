@@ -5,6 +5,8 @@ using Microsoft.Azure.CognitiveServices.Vision.ComputerVision;
 using Microsoft.EntityFrameworkCore;
 using Azure.Storage.Blobs;
 using PrintMe.Workers;
+using Azure.Storage.Queues;
+using Microsoft.Extensions.Azure;
 
 namespace PrintMe.Workers
 {
@@ -36,6 +38,9 @@ namespace PrintMe.Workers
                     });
 
                     services.AddSingleton(new BlobServiceClient(context.Configuration["StorageConnectionString"]));
+                    
+                    services.AddSingleton(sp => new QueueClient(context.Configuration["StorageConnectionString"], "images-to-process"));
+
 
                     services.AddHttpClient();
                     services.AddHostedService<Worker>();
