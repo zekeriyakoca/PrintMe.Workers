@@ -1,8 +1,7 @@
-namespace PrintMe.Workers.Models;
-
+namespace PrintMe.Workers.Enums;
 
 [Flags]
-public enum CategoryEnum : long
+public enum Category : long
 {
     None = 0,
 

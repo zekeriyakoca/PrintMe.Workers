@@ -12,6 +12,7 @@ using System.IO;
 using System.Text;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 using OpenAI;
+using PrintMe.Workers.Enums;
 
 namespace PrintMe.Workers;
 
@@ -95,19 +96,29 @@ public class Worker : BackgroundService
             string ImageUrl = await UploadImage(resizedImage, $"printme-processed-images", imageId, $"{imageId}");
             string thumbnailUrl = await UploadImage(thumbnailImage, $"printme-processed-images", imageId, $"{imageId}-thumbnail");
 
-            var product = new Product
+            var product = new CatalogItem()
             {
-                OriginalImageUrl = originalImageUrl,
-                ImageUrl = ImageUrl,
-                ThumbnailUrl = thumbnailUrl,
-                MockupImageUrl = resultImageUrl,
-                MockupThumbnailUrl = thumbnailResultImageUrl,
-                Name = imageDefinition.Title
+                CatalogType = CatalogType.Print,
+                Category = imageDefinition.Category,
+                Description = imageDefinition.Description,
+                Name = imageDefinition.Title,
+                Owner = "PrintMe",
+                PictureFileName = imageId,
+                Price = 39,
+                Size = PrintSize.None,
+                AvailableStock = 100,
+                RestockThreshold = 10,
+                MaxStockThreshold = 100,
+                OnReorder = false,
+                SalePercentage = 0,
+                OriginalImage = originalImageUrl,
+                SearchParameters = imageDefinition.Description,
+                Tags = CatalogTags.Featured
             };
 
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            await using var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-            dbContext.Products.Add(product);
+            dbContext.CatalogItems.Add(product);
             await dbContext.SaveChangesAsync();
         }
     }

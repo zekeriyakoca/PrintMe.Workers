@@ -1,3 +1,5 @@
+using PrintMe.Workers.Enums;
+
 namespace PrintMe.Workers.Models;
 
 public class CompletionResponse
@@ -14,5 +16,5 @@ public class ImageDefinition
     public string Painter { get; set; } = "Unknown";
     public string Title { get; set; } = "Painting";
     public string Description { get; set; } = "";
-    public CategoryEnum Category { get; set; } = CategoryEnum.None;
+    public Category Category { get; set; } = Category.None;
 }
