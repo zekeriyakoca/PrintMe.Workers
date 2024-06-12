@@ -1,21 +1,18 @@
-using System.ClientModel;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.CognitiveServices.Vision.ComputerVision;
-using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using PrintMe.Workers.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
-using SixLabors.ImageSharp.Drawing.Processing;
-using System.IO;
 using System.Text;
 using Azure.Storage.Queues;
 using Azure.Storage.Queues.Models;
 using Microsoft.Azure.CognitiveServices.Vision.ComputerVision.Models;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
-using OpenAI;
 using PrintMe.Workers.Enums;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Formats.Png;
 
 namespace PrintMe.Workers;
 
@@ -27,7 +24,7 @@ public class Worker : BackgroundService
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly BlobServiceClient _blobServiceClient;
     private readonly QueueClient _queueClient;
-    private readonly string _openAIApiKey;
+    private readonly string _openAiApiKey;
     private readonly HttpClient _httpClient;
 
     public Worker(ILogger<Worker> logger, IHttpClientFactory httpClientFactory, ComputerVisionClient computerVisionClient, IServiceScopeFactory serviceScopeFactory,
@@ -40,7 +37,7 @@ public class Worker : BackgroundService
         _blobServiceClient = blobServiceClient;
         _queueClient = queueClient;
         _httpClient = factory.CreateClient();
-        _openAIApiKey = configuration["OpenAIKey"];
+        _openAiApiKey = configuration["OpenAIKey"];
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -56,7 +53,7 @@ public class Worker : BackgroundService
 
             await ProcessMessagesInQueue(stoppingToken);
 
-            await Task.Delay(1000*10, stoppingToken);
+            await Task.Delay(1000 * 15, stoppingToken);
         }
     }
 
@@ -97,70 +94,109 @@ public class Worker : BackgroundService
         }
     }
 
-    public async Task ProcessMessage(string queueMessage)
+    private async Task ProcessMessage(string queueMessage)
     {
-        using (var scope = _serviceScopeFactory.CreateScope())
+        using var scope = _serviceScopeFactory.CreateScope();
+        _logger.LogInformation($"C# Queue trigger function processed: {queueMessage}");
+
+        var message = JsonConvert.DeserializeObject<QueueMessageContent>(queueMessage);
+        var imageId = message.ImageId;
+        var originalImageUrl = message.ImageUrl;
+
+        var originalImage = await DownloadImage(originalImageUrl);
+        var resizedImage = originalImage.Clone(ctx => ctx.Resize(new ResizeOptions()
         {
-            _logger.LogInformation($"C# Queue trigger function processed: {queueMessage}");
-;
-            var message = JsonConvert.DeserializeObject<QueueMessageContent>(queueMessage);
-            var imageId = message.ImageId;
-            var templateObject = message.MockupTemplates[0];
-            var originalImageUrl = message.ImageUrl;
+            Mode = ResizeMode.Max,
+            Size = new Size(1000, 1000),
+            Sampler = KnownResamplers.Lanczos8
+        }));
+        var thumbnailImage = originalImage.Clone(ctx => ctx.Resize(new ResizeOptions()
+        {
+            Mode = ResizeMode.Max,
+            Size = new Size(500, 500),
+            Sampler = KnownResamplers.Lanczos8,
+            
+        }));
+        var resizedImageEntity = new ProductImage
+        {
+            ImageUrl = await UploadImage(resizedImage, $"printme-processed-images", imageId, $"{imageId}"),
+            ThumbnailUrl = await UploadImage(thumbnailImage, $"printme-processed-images", imageId, $"{imageId}-thumbnail")
+        };
 
-            var originalImage = await DownloadImage(originalImageUrl);
-            var templateImage = await DownloadImage(templateObject.TemplateImageUrl);
+        var analyzeOfImage = await AnalyzeImageWithComputerVision(resizedImageEntity.ImageUrl);
+        var imageDefinition = await DescribeImage(analyzeOfImage, message.ImageDescription);
 
-            var targetArea = new Rectangle(templateObject.X, templateObject.Y, templateObject.Width, templateObject.Height);
+        var product = new CatalogItem()
+        {
+            CatalogType = CatalogType.Print,
+            Category = imageDefinition.Category,
+            Motto = imageDefinition.Motto + (String.IsNullOrEmpty(imageDefinition.Painter) ? "" : $" by {imageDefinition.Painter}"),
+            Description = imageDefinition.Description,
+            Name = imageDefinition.Title,
+            Owner = "PrintMe",
+            PictureFileName = imageId,
+            Price = 49,
+            Size = PrintSize.None,
+            AvailableStock = 100,
+            RestockThreshold = 10,
+            MaxStockThreshold = 100,
+            OnReorder = false,
+            SalePercentage = 0,
+            OriginalImage = originalImageUrl,
+            SearchParameters = imageDefinition.Description,
+            Tags = CatalogTags.Featured
+        };
+
+        product.ProductImages.Add(resizedImageEntity);
+
+        var mockupIndex = 1;
+        foreach (var template in message.MockupTemplates)
+        {
+            var templateImage = await DownloadImage(template.TemplateImageUrl);
+
+            var targetArea = new Rectangle(template.X, template.Y, template.Width, template.Height);
             var resultImage = CreateMockup(templateImage, originalImage, targetArea);
-
-            var resizedImage = originalImage.Clone(ctx => ctx.Resize(1000, originalImage.Height * 1000 / originalImage.Width));
-            var thumbnailImage = resizedImage.Clone(ctx => ctx.Resize(200, resizedImage.Height * 200 / resizedImage.Width));
-            var resizedResultImage = resultImage.Clone(ctx => ctx.Resize(1000, resultImage.Height * 1000 / resultImage.Width));
-            var thumbnailResultImage = resizedResultImage.Clone(ctx => ctx.Resize(200, resizedResultImage.Height * 200 / resizedResultImage.Width));
-
-            
-            string resultImageUrl = await UploadImage(resizedResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup");
-            string thumbnailResultImageUrl = await UploadImage(thumbnailResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup-thumbnail");
-            string ImageUrl = await UploadImage(resizedImage, $"printme-processed-images", imageId, $"{imageId}");
-            string thumbnailUrl = await UploadImage(thumbnailImage, $"printme-processed-images", imageId, $"{imageId}-thumbnail");
-            
-            var analyzeOfImage = await AnalyzeImageWithComputerVision(ImageUrl);
-            var imageDefinition = await DescribeImage(analyzeOfImage, message.ImageDescription);
-
-
-            var product = new CatalogItem()
+            var resizedResultImage = resultImage.Clone(ctx => ctx.Resize(1000, resultImage.Height * 1000 / resultImage.Width, KnownResamplers.Lanczos8));
+            var thumbnailResultImage = resultImage.Clone(ctx => ctx.Resize(500, resultImage.Height * 500 / resultImage.Width, KnownResamplers.Lanczos8));
+            // var thumbnailResultImage = resizedResultImage.Clone(ctx => ctx.Resize(250, resizedResultImage.Height * 250 / resizedResultImage.Width, KnownResamplers.RobidouxSharp));
+            var mockupImage = new ProductImage
             {
-                CatalogType = CatalogType.Print,
-                Category = imageDefinition.Category,
-                Motto = imageDefinition.Motto + (String.IsNullOrEmpty(imageDefinition.Painter) ? "" : $" by {imageDefinition.Painter}"),
-                Description = imageDefinition.Description,
-                Name = imageDefinition.Title,
-                Owner = "PrintMe",
-                PictureFileName = imageId,
-                Price = 39,
-                Size = PrintSize.None,
-                AvailableStock = 100,
-                RestockThreshold = 10,
-                MaxStockThreshold = 100,
-                OnReorder = false,
-                SalePercentage = 0,
-                OriginalImage = originalImageUrl,
-                SearchParameters = imageDefinition.Description,
-                Tags = CatalogTags.Featured
+                ImageUrl = await UploadImage(resizedResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup{mockupIndex}"),
+                ThumbnailUrl = await UploadImage(thumbnailResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup{mockupIndex}-thumbnail")
             };
-
-            await using var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-            dbContext.CatalogItems.Add(product);
-            await dbContext.SaveChangesAsync();
+            product.ProductImages.Add(mockupImage);
+            mockupIndex++;
         }
+
+        await using var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        dbContext.CatalogItems.Add(product);
+        await dbContext.SaveChangesAsync();
     }
 
     private async Task<Image<Rgba32>> DownloadImage(string url)
     {
         return await Image.LoadAsync<Rgba32>(await DownloadImageAsStream(url));
     }
+
+    private async Task<string> UploadImage(Image<Rgba32> image, string containerName, string blogFolder, string imageName)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+        await containerClient.CreateIfNotExistsAsync();
+
+        var blobName = blogFolder + "/" + imageName + ".jpeg";
+        var blobClient = containerClient.GetBlobClient(blobName);
+
+        using (var ms = new MemoryStream())
+        {
+            await image.SaveAsJpegAsync(ms);
+            ms.Position = 0;
+            await blobClient.UploadAsync(ms, true);
+        }
+
+        return blobClient.Uri.ToString();
+    }
+
     private async Task<Stream> DownloadImageAsStream(string url)
     {
         var client = _httpClientFactory.CreateClient();
@@ -171,7 +207,7 @@ public class Worker : BackgroundService
 
     private Image<Rgba32> CreateMockup(Image<Rgba32> templateImage, Image<Rgba32> sourceImage, Rectangle targetArea)
     {
-        var resizedSource = ResizeAndCrop(sourceImage, targetArea); // sourceImage.Clone(ctx => ctx.Resize(targetArea.Width, targetArea.Height));
+        var resizedSource = ResizeAndCrop(sourceImage, targetArea);
         templateImage.Mutate(ctx => ctx.DrawImage(resizedSource, targetArea.Location, 1f));
         return templateImage;
     }
@@ -198,7 +234,7 @@ public class Worker : BackgroundService
         }
 
         // Resize the source image
-        var resizedImage = sourceImage.Clone(ctx => ctx.Resize(newWidth, newHeight));
+        var resizedImage = sourceImage.Clone(ctx => ctx.Resize(newWidth, newHeight, KnownResamplers.Lanczos8));
 
         // Calculate the crop rectangle to center the target area
         int cropX = (newWidth - targetArea.Width) / 2;
@@ -211,10 +247,9 @@ public class Worker : BackgroundService
         return croppedImage;
     }
 
-
     private async Task<string> AnalyzeImageWithComputerVision(string imageUrl)
     {
-        using (Stream imageStream = await DownloadImageAsStream(imageUrl))
+        await using (Stream imageStream = await DownloadImageAsStream(imageUrl))
         {
             var features = new VisualFeatureTypes?[] { VisualFeatureTypes.Description, VisualFeatureTypes.Tags, VisualFeatureTypes.Categories };
             ImageAnalysis analysis = await _computerVisionClient.AnalyzeImageInStreamAsync(imageStream, features);
@@ -225,7 +260,7 @@ public class Worker : BackgroundService
                    + $"nCategories: {String.Join(",", analysis.Categories.Select(x => x.Name))}.";
         }
     }
-    
+
     private async Task<string> DescribeImageWithComputerVision(string imageUrl)
     {
         var descriptionResult = await _computerVisionClient.DescribeImageAsync(imageUrl);
@@ -233,11 +268,11 @@ public class Worker : BackgroundService
         {
             return descriptionResult.Captions[0].Text;
         }
-    
+
         return "No description available";
     }
 
-    public async Task<ImageDefinition> DescribeImage(string analyzeOfImage, string descriptionOfImage)
+    private async Task<ImageDefinition> DescribeImage(string analyzeOfImage, string descriptionOfImage)
     {
         var prompt = $@"
         Given the image description(this is name of file. ignore it if it's a generic name like 'download') as '{descriptionOfImage}' and analyzeOfImage as '{analyzeOfImage}' generated by Azure Computer Vision service, try to find which painting is it. 
@@ -290,8 +325,8 @@ public class Worker : BackgroundService
 
         var requestContent = new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json");
 
-        
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"Bearer {_openAIApiKey}");
+
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", $"Bearer {_openAiApiKey}");
 
         var response = await _httpClient.PostAsync("https://api.openai.com/v1/completions", requestContent);
         var responseContent = await response.Content.ReadAsStringAsync();
@@ -310,24 +345,5 @@ public class Worker : BackgroundService
         }
 
         return new ImageDefinition();
-    }
-
-
-    private async Task<string> UploadImage(Image<Rgba32> image, string containerName, string blogFolder, string imageName)
-    {
-        var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
-        await containerClient.CreateIfNotExistsAsync();
-
-        var blobName = blogFolder + "/" + imageName + ".jpg";
-        var blobClient = containerClient.GetBlobClient(blobName);
-
-        using (var ms = new MemoryStream())
-        {
-            await image.SaveAsJpegAsync(ms);
-            ms.Position = 0;
-            await blobClient.UploadAsync(ms, true);
-        }
-
-        return blobClient.Uri.ToString();
     }
 }

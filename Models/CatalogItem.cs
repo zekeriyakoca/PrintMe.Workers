@@ -22,6 +22,8 @@ public class CatalogItem
     public string PictureFileName { get; set; }
     
     public string OriginalImage { get; set; }
+    
+    public IList<ProductImage> ProductImages { get; set; } = new List<ProductImage>();
 
     public Category Category { get; set; } = Category.None;
 
