@@ -13,7 +13,7 @@ public class Choice
 
 public class ImageDefinition
 {
-    public string Painter { get; set; } = "Unknown";
+    public string Painter { get; set; }
     public string Title { get; set; } = "Painting";
     
     public string Motto { get; set; } = "Colors Speak Louder Than Words, Embrace the Art Within";

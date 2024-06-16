@@ -11,8 +11,6 @@ using Azure.Storage.Queues.Models;
 using Microsoft.Azure.CognitiveServices.Vision.ComputerVision.Models;
 using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 using PrintMe.Workers.Enums;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Formats.Png;
 
 namespace PrintMe.Workers;
 
@@ -110,6 +108,9 @@ public class Worker : BackgroundService
             Size = new Size(1000, 1000),
             Sampler = KnownResamplers.Lanczos8
         }));
+        
+        _logger.LogInformation("Original image resized: imageId: {imageId}", imageId);
+        
         var thumbnailImage = originalImage.Clone(ctx => ctx.Resize(new ResizeOptions()
         {
             Mode = ResizeMode.Max,
@@ -117,6 +118,9 @@ public class Worker : BackgroundService
             Sampler = KnownResamplers.Lanczos8,
             
         }));
+        
+        _logger.LogInformation("Thumbnail for original image created: imageId: {imageId}", imageId);
+        
         var resizedImageEntity = new ProductImage
         {
             ImageUrl = await UploadImage(resizedImage, $"printme-processed-images", imageId, $"{imageId}"),
@@ -124,6 +128,7 @@ public class Worker : BackgroundService
         };
 
         var analyzeOfImage = await AnalyzeImageWithComputerVision(resizedImageEntity.ImageUrl);
+
         var imageDefinition = await DescribeImage(analyzeOfImage, message.ImageDescription);
 
         var product = new CatalogItem()
@@ -148,6 +153,7 @@ public class Worker : BackgroundService
         };
 
         product.ProductImages.Add(resizedImageEntity);
+        _logger.LogInformation("Product to be created with its definitions: product: {productJSON}", JsonConvert.SerializeObject(product));
 
         var mockupIndex = 1;
         foreach (var template in message.MockupTemplates)
@@ -156,6 +162,7 @@ public class Worker : BackgroundService
 
             var targetArea = new Rectangle(template.X, template.Y, template.Width, template.Height);
             var resultImage = CreateMockup(templateImage, originalImage, targetArea);
+
             var resizedResultImage = resultImage.Clone(ctx => ctx.Resize(1000, resultImage.Height * 1000 / resultImage.Width, KnownResamplers.Lanczos8));
             var thumbnailResultImage = resultImage.Clone(ctx => ctx.Resize(500, resultImage.Height * 500 / resultImage.Width, KnownResamplers.Lanczos8));
             // var thumbnailResultImage = resizedResultImage.Clone(ctx => ctx.Resize(250, resizedResultImage.Height * 250 / resizedResultImage.Width, KnownResamplers.RobidouxSharp));
@@ -164,6 +171,8 @@ public class Worker : BackgroundService
                 ImageUrl = await UploadImage(resizedResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup{mockupIndex}"),
                 ThumbnailUrl = await UploadImage(thumbnailResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup{mockupIndex}-thumbnail")
             };
+            
+            _logger.LogInformation("Mockup create: imageId: {imageId}, originalImageUrl: {originalImageUrl}", imageId, originalImageUrl);
             product.ProductImages.Add(mockupImage);
             mockupIndex++;
         }
@@ -172,19 +181,23 @@ public class Worker : BackgroundService
 
         dbContext.CatalogItems.Add(product);
         await dbContext.SaveChangesAsync();
+        _logger.LogInformation("Product created in DB : product: {productJSON}", JsonConvert.SerializeObject(product));
     }
 
     private async Task<Image<Rgba32>> DownloadImage(string url)
     {
-        return await Image.LoadAsync<Rgba32>(await DownloadImageAsStream(url));
+        _logger.LogInformation("Image is being downloaded. url: {url}", url);
+        var image =  await Image.LoadAsync<Rgba32>(await DownloadImageAsStream(url));
+        _logger.LogInformation("Image has been downloaded. url: {url}", url);
+        return image;
     }
 
-    private async Task<string> UploadImage(Image<Rgba32> image, string containerName, string blogFolder, string imageName)
+    private async Task<string> UploadImage(Image<Rgba32> image, string containerName, string blobFolder, string imageName)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         await containerClient.CreateIfNotExistsAsync();
 
-        var blobName = blogFolder + "/" + imageName + ".jpeg";
+        var blobName = blobFolder + "/" + imageName + ".jpeg";
         var blobClient = containerClient.GetBlobClient(blobName);
 
         using (var ms = new MemoryStream())
@@ -194,6 +207,7 @@ public class Worker : BackgroundService
             await blobClient.UploadAsync(ms, true);
         }
 
+        _logger.LogInformation("Image uploaded to blob storage: blobFolder: {blobFolder}, imageName: {imageName}", blobFolder, imageName);
         return blobClient.Uri.ToString();
     }
 
@@ -274,46 +288,51 @@ public class Worker : BackgroundService
 
     private async Task<ImageDefinition> DescribeImage(string analyzeOfImage, string descriptionOfImage)
     {
+        
+        _logger.LogInformation("Parameters for request of openAI model = analyzeOfImage: {analyzeOfImage}, descriptionOfImage: {descriptionOfImage}", analyzeOfImage, descriptionOfImage);
         var prompt = $@"
-        Given the image description(this is name of file. ignore it if it's a generic name like 'download') as '{descriptionOfImage}' and analyzeOfImage as '{analyzeOfImage}' generated by Azure Computer Vision service, try to find which painting is it. 
-        If you don't think this is a painting by a painter
-        return find a good title,motto and description. Find a proper category and return a JSON object with the following structure:
-        {{
-            ""Painter"": ""<Name of the painter if known, otherwise null>"",
-            ""Title"": ""<Name or Title of the painting>"",
-            ""Motto"": ""<Short Description of the painting. Max 12 words>"",
-            ""Description"": ""<A detailed description of the painting. Max 40 words>"",
-            ""Category"": <Category number corresponding to the following Enum: 
-            public enum CategoryEnum : long
-            {{
-                None: 0,
-                NaturePrints: 1,
-                Botanical: 2,
-                Animals: 4,
-                SpaceAndAstronomy: 8,
-                MapsAndCities: 16,
-                Nature: 31,
-                RetroAndVintage: 128,
-                BlackAndWhite: 256,
-                GoldAndSilver: 512,
-                HistoricalPrints: 1024,
-                ClassicPosters: 2048,
-                VintageAndRetro: 3968,
-                Illustrations: 16384,
-                Photographs: 32768,
-                ArtPrints: 65536,
-                TextPosters: 131072,
-                Graphical: 262144,
-                ArtStyles: 511104,
-                FamousPainters: 2097152,
-                IconicPhotos: 4194304,
-                StudioCollections: 8388608,
-                ModernArtists: 16777216,
-                AbstractArt: 33554432,
-                FamousPaintersCategory: 67108863
-            }}
-            For example, category should be  1 for NaturePrints 3 for botanical 5 for Animals>
-        }}";
+Given the image description (this is the name of the file; ignore it if it's a generic name like 'download') as '{descriptionOfImage}' and analyzeOfImage as '{analyzeOfImage}' generated by Azure Computer Vision service, try to determine which painting it is. If you don't think this is a painting by a known painter, provide a good title, motto, and description. Find a proper category and return a JSON object with the following structure:
+
+{{
+    ""Painter"": ""<Name of the painter if known, otherwise null value>"",
+    ""Title"": ""<Name or Title of the painting>"",
+    ""Motto"": ""<Short Description of the painting. Max 12 words>"",
+    ""Description"": ""<A detailed description of the painting. Max 40 words>"",
+    ""Category"": <Category number corresponding to the following Enum>
+}}
+
+public enum CategoryEnum : long
+{{
+    None = 0,
+    NaturePrints = 1,
+    Botanical = 2,
+    Animals = 4,
+    SpaceAndAstronomy = 8,
+    MapsAndCities = 16,
+    Nature = 31,
+    RetroAndVintage = 128,
+    BlackAndWhite = 256,
+    GoldAndSilver = 512,
+    HistoricalPrints = 1024,
+    ClassicPosters = 2048,
+    VintageAndRetro = 3968,
+    Illustrations = 16384,
+    Photographs = 32768,
+    ArtPrints = 65536,
+    TextPosters = 131072,
+    Graphical = 262144,
+    ArtStyles = 511104,
+    FamousPainters = 2097152,
+    IconicPhotos = 4194304,
+    StudioCollections = 8388608,
+    ModernArtists = 16777216,
+    AbstractArt = 33554432,
+    FamousPaintersCategory = 67108863
+}}
+
+For example, category should be 1 for NaturePrints, 3 for Botanical, 5 for Animals, 8 for both Botanical and Animals.
+";
+
 
         var requestBody = new
         {
@@ -336,6 +355,7 @@ public class Worker : BackgroundService
         {
             try
             {
+                _logger.LogInformation("Text response of openAI model: {responseContent}", completionResponse.Choices[0].Text.Trim());
                 return JsonConvert.DeserializeObject<ImageDefinition>(completionResponse.Choices[0].Text.Trim());
             }
             catch
