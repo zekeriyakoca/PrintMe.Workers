@@ -5,10 +5,25 @@ namespace PrintMe.Workers.Models;
 public class CompletionResponse
 {
     public List<Choice> Choices { get; set; } = new List<Choice>();
+    public ErrorResponse Error { get; set; }
 }
+
 public class Choice
 {
     public string Text { get; set; }
+}
+
+public class ErrorResponse
+{
+    public string Message { get; set; }
+    public string Type { get; set; }
+    public string Param { get; set; }
+    public string Code { get; set; }
+
+    public override string ToString()
+    {
+        return String.Join(", ", new string[] { Message, Type, Param, Code });
+    }
 }
 
 public class ImageDefinition
