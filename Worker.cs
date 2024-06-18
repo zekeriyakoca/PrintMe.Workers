@@ -128,6 +128,8 @@ public class Worker : BackgroundService
             ThumbnailUrl = await UploadImage(thumbnailImage, $"printme-processed-images", imageId, $"{imageId}-thumbnail")
         };
 
+        await UploadMobileVersions(thumbnailImage, imageId, imageId, originalImage);
+
         var analyzeOfImage = await AnalyzeImageWithComputerVision(resizedImageEntity.ImageUrl);
 
         var imageDefinition = await DescribeImage(analyzeOfImage, message.ImageDescription);
@@ -166,13 +168,14 @@ public class Worker : BackgroundService
 
             var resizedResultImage = resultImage.Clone(ctx => ctx.Resize(1000, resultImage.Height * 1000 / resultImage.Width, KnownResamplers.Lanczos8));
             var thumbnailResultImage = resultImage.Clone(ctx => ctx.Resize(500, resultImage.Height * 500 / resultImage.Width, KnownResamplers.Lanczos8));
-            // var thumbnailResultImage = resizedResultImage.Clone(ctx => ctx.Resize(250, resizedResultImage.Height * 250 / resizedResultImage.Width, KnownResamplers.RobidouxSharp));
             var mockupImage = new ProductImage
             {
                 ImageUrl = await UploadImage(resizedResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup{mockupIndex}"),
                 ThumbnailUrl = await UploadImage(thumbnailResultImage, $"printme-processed-images", imageId, $"{imageId}-mockup{mockupIndex}-thumbnail")
             };
             
+            await UploadMobileVersions(thumbnailResultImage, imageId, $"{imageId}-mockup{mockupIndex}",resultImage);
+
             _logger.LogInformation("Mockup create: imageId: {imageId}, originalImageUrl: {originalImageUrl}", imageId, originalImageUrl);
             product.ProductImages.Add(mockupImage);
             mockupIndex++;
@@ -183,6 +186,19 @@ public class Worker : BackgroundService
         dbContext.CatalogItems.Add(product);
         await dbContext.SaveChangesAsync();
         _logger.LogInformation("Product created in DB : product: {productJSON}", JsonConvert.SerializeObject(product));
+    }
+
+    private async Task UploadMobileVersions(Image<Rgba32> thumbnailImage, string imageId, string imageName, Image<Rgba32> originalImage)
+    {
+        // thumbnailImage is good enough for mobile
+        await UploadImage(thumbnailImage, $"printme-processed-images", imageId, $"{imageName}-m");
+        var mobileOfThumbnail = originalImage.Clone(ctx => ctx.Resize(new ResizeOptions()
+        {
+            Mode = ResizeMode.Max,
+            Size = new Size(300, 350),
+            Sampler = KnownResamplers.Lanczos8,
+        }));
+        await UploadImage(mobileOfThumbnail, $"printme-processed-images", imageId, $"{imageName}-thumbnail-m");
     }
 
     private async Task<Image<Rgba32>> DownloadImage(string url)
