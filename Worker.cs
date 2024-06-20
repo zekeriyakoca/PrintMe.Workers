@@ -195,7 +195,7 @@ public class Worker : BackgroundService
         var mobileOfThumbnail = originalImage.Clone(ctx => ctx.Resize(new ResizeOptions()
         {
             Mode = ResizeMode.Max,
-            Size = new Size(300, 350),
+            Size = new Size(420, 420),
             Sampler = KnownResamplers.Lanczos8,
         }));
         await UploadImage(mobileOfThumbnail, $"printme-processed-images", imageId, $"{imageName}-thumbnail-m");
