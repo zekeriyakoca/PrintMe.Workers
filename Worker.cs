@@ -143,7 +143,7 @@ public class Worker : BackgroundService
             Name = imageDefinition.Title,
             Owner = "PrintMe",
             PictureFileName = imageId,
-            Price = 49,
+            Price = new decimal(3.15),
             Size = PrintSize.None,
             AvailableStock = 100,
             RestockThreshold = 10,
@@ -347,6 +347,7 @@ public enum CategoryEnum : long
 }}
 
 For example, category should be 1 for NaturePrints, 3 for Botanical, 5 for Animals, 8 for both Botanical and Animals.
+RETURN ONLY JSON OBJECT. DO NOT RETURN ANYTHING ELSE.
 ";
 
 
@@ -355,7 +356,7 @@ For example, category should be 1 for NaturePrints, 3 for Botanical, 5 for Anima
             model = "gpt-3.5-turbo-instruct-0914",
             prompt = prompt,
             max_tokens = 500,
-            temperature = 0.6
+            temperature = 0.2
         };
 
         var requestContent = new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json");
