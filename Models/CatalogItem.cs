@@ -23,6 +23,10 @@ public class CatalogItem
     
     public string OriginalImage { get; set; }
     
+    public int OriginalImageWidth { get; set; }
+    
+    public int OriginalImageHeight{ get; set; }
+    
     public IList<ProductImage> ProductImages { get; set; } = new List<ProductImage>();
 
     public Category Category { get; set; } = Category.None;

@@ -143,7 +143,7 @@ public class Worker : BackgroundService
             Name = imageDefinition.Title,
             Owner = "PrintMe",
             PictureFileName = imageId,
-            Price = new decimal(3.15),
+            Price = new decimal(4.40 * CalculateColorDensity(originalImage)),
             Size = PrintSize.None,
             AvailableStock = 100,
             RestockThreshold = 10,
@@ -152,6 +152,8 @@ public class Worker : BackgroundService
             SalePercentage = 0,
             OriginalImage = originalImageUrl,
             SearchParameters = imageDefinition.Description,
+            OriginalImageWidth = originalImage.Width,
+            OriginalImageHeight = originalImage.Height,
             Tags = CatalogTags.Featured
         };
 
@@ -199,6 +201,49 @@ public class Worker : BackgroundService
             Sampler = KnownResamplers.Lanczos8,
         }));
         await UploadImage(mobileOfThumbnail, $"printme-processed-images", imageId, $"{imageName}-thumbnail-m");
+    }
+    static double CalculateColorDensity(Image<Rgba32> image)
+    {
+        if (image == null)
+        {
+            throw new ArgumentNullException(nameof(image));
+        }
+
+        int width = image.Width;
+        int height = image.Height;
+        int totalPixels = width * height;
+        int nonWhitePixels = 0;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                // Get the pixel color from the Image<Rgba32>
+                Rgba32 pixel = image[x, y];
+
+                // Check if the pixel is not white
+                if (!IsWhite(pixel))
+                {
+                    nonWhitePixels++;
+                }
+            }
+        }
+
+        // Calculate the density of non-white pixels
+        double nonWhiteDensity = (double)nonWhitePixels / totalPixels;
+
+        // Map the density to the range 1.0 to 1.49
+        double minDensity = 1.0;
+        double maxDensity = 1.49;
+        double colorDensity = minDensity + (maxDensity - minDensity) * nonWhiteDensity;
+
+        return colorDensity;
+    }
+
+    static bool IsWhite(Rgba32 color)
+    {
+        // Adjust this threshold as needed
+        return color.R > 240 && color.G > 240 && color.B > 240;
     }
 
     private async Task<Image<Rgba32>> DownloadImage(string url)
