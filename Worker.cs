@@ -17,7 +17,6 @@ namespace PrintMe.Workers;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ComputerVisionClient _computerVisionClient;
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly BlobServiceClient _blobServiceClient;
@@ -29,7 +28,6 @@ public class Worker : BackgroundService
         BlobServiceClient blobServiceClient, IHttpClientFactory factory, IConfiguration configuration, QueueClient queueClient)
     {
         _logger = logger;
-        _httpClientFactory = httpClientFactory;
         _computerVisionClient = computerVisionClient;
         _serviceScopeFactory = serviceScopeFactory;
         _blobServiceClient = blobServiceClient;
@@ -232,8 +230,7 @@ public class Worker : BackgroundService
         // Calculate the density of non-white pixels
         double nonWhiteDensity = (double)nonWhitePixels / totalPixels;
 
-        // Map the density to the range 1.0 to 1.49
-        double minDensity = 1.0;
+        double minDensity = 1.2;
         double maxDensity = 1.49;
         double colorDensity = minDensity + (maxDensity - minDensity) * nonWhiteDensity;
 
@@ -366,32 +363,31 @@ public enum CategoryEnum : long
 {{
     None = 0,
     NaturePrints = 1,
-    Botanical = 2,
-    Animals = 4,
+    BotanicalArt = 2,
+    AnimalArt = 4,
     SpaceAndAstronomy = 8,
     MapsAndCities = 16,
-    Nature = 31,
-    RetroAndVintage = 128,
-    BlackAndWhite = 256,
-    GoldAndSilver = 512,
-    HistoricalPrints = 1024,
-    ClassicPosters = 2048,
-    VintageAndRetro = 3968,
-    Illustrations = 16384,
-    Photographs = 32768,
-    ArtPrints = 65536,
-    TextPosters = 131072,
-    Graphical = 262144,
-    ArtStyles = 511104,
-    FamousPainters = 2097152,
-    IconicPhotos = 4194304,
-    StudioCollections = 8388608,
-    ModernArtists = 16777216,
-    AbstractArt = 33554432,
-    FamousPaintersCategory = 67108863
+    Landscapes = 32,
+    ArtPrints = 64,
+    RenaissanceMasters = 128,
+    DutchMasters = 256,
+    ModernMasters = 512,
+    AbstractArt = 1024,
+    RetroAndVintage = 2048,
+    BlackAndWhite = 4096,
+    HistoricalPosters = 8192,
+    ClassicPosters = 16384,
+    TextPosters = 32768,
+    MoviesAndGamesPosters = 65536,
+    MusicPosters = 131072,
+    SportsPosters = 262144,
+    Posters = 524287,
+    FamousPainters = 1984,
+    NatureAndLandscapes = 63,
 }}
 
-For example, category should be 1 for NaturePrints, 3 for Botanical, 5 for Animals, 8 for both Botanical and Animals.
+For example, category should be 1 for NaturePrints, 3 for BotanicalArt, 4 for AnimalArt, 6 for both BotanicalArt and AnimalArt, 9 for NaturePrints and SpaceAndAstronomy.
+Be precise on defining the category. Category is important. 
 RETURN ONLY JSON OBJECT. DO NOT RETURN ANYTHING ELSE.
 ";
 
@@ -401,7 +397,7 @@ RETURN ONLY JSON OBJECT. DO NOT RETURN ANYTHING ELSE.
             model = "gpt-3.5-turbo-instruct-0914",
             prompt = prompt,
             max_tokens = 500,
-            temperature = 0.2
+            temperature = 0.3
         };
 
         var requestContent = new StringContent(JsonConvert.SerializeObject(requestBody), Encoding.UTF8, "application/json");
