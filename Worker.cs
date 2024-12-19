@@ -138,10 +138,7 @@ public class Worker(
         var mockupIndex = 1;
         foreach (var template in message.MockupTemplates)
         {
-            var templateImage = await imageProcessService.DownloadImageAsync(template.TemplateImageUrl);
-
-            var targetArea = new Rectangle(template.X, template.Y, template.Width, template.Height);
-            var resultImage = CreateMockup(templateImage, originalImage, targetArea);
+            var resultImage = await imageProcessService.CreateMockup(originalImage, template);
 
             var resizedResultImage = imageProcessService.ResizeImageTo(resultImage, 1000, resultImage.Height * 1000 / resultImage.Width);
             var thumbnailResultImage = imageProcessService.ResizeImageTo(resultImage, 500, resultImage.Height * 500 / resultImage.Width);
@@ -193,55 +190,6 @@ public class Worker(
 
         logger.LogInformation("Image uploaded to blob storage: blobFolder: {blobFolder}, imageName: {imageName}", blobFolder, imageName);
         return blobClient.Uri.ToString();
-    }
-
-    private Image<Rgba32> CreateMockup(Image<Rgba32> templateImage, Image<Rgba32> sourceImage, Rectangle targetArea)
-    {
-        var resizedSource = ResizeAndCrop(sourceImage, targetArea);
-        templateImage.Mutate(ctx => ctx.DrawImage(resizedSource, targetArea.Location, 1f));
-        return templateImage;
-    }
-
-    private Image<Rgba32> ResizeAndCrop(Image<Rgba32> sourceImage, Rectangle targetArea)
-    {
-        var (newWidth, newHeight) = CalculateNewDimensions(sourceImage, targetArea);
-
-        // Resize the source image
-        var resizedImage = sourceImage.Clone(ctx => ctx.Resize(newWidth, newHeight, KnownResamplers.Lanczos8));
-
-        // Calculate the crop rectangle to center the target area
-        int cropX = (newWidth - targetArea.Width) / 2;
-        int cropY = (newHeight - targetArea.Height) / 2;
-        var cropRectangle = new Rectangle(cropX, cropY, targetArea.Width, targetArea.Height);
-
-        // Crop the resized image
-        var croppedImage = resizedImage.Clone(ctx => ctx.Crop(cropRectangle));
-
-        return croppedImage;
-    }
-
-    private static (int newWidth, int newHeight) CalculateNewDimensions(Image<Rgba32> sourceImage, Rectangle targetArea)
-    {
-        // Calculate the aspect ratio of the target area
-        float targetAspectRatio = (float)targetArea.Width / targetArea.Height;
-        float sourceAspectRatio = (float)sourceImage.Width / sourceImage.Height;
-
-        // Determine the new dimensions while maintaining the aspect ratio
-        int newWidth, newHeight;
-        if (sourceAspectRatio > targetAspectRatio)
-        {
-            // Source is wider than target aspect ratio
-            newHeight = targetArea.Height;
-            newWidth = (int)(sourceImage.Width * ((float)targetArea.Height / sourceImage.Height));
-        }
-        else
-        {
-            // Source is taller than target aspect ratio
-            newWidth = targetArea.Width;
-            newHeight = (int)(sourceImage.Height * ((float)targetArea.Width / sourceImage.Width));
-        }
-
-        return (newWidth, newHeight);
     }
 
     private async Task<string> AnalyzeImageWithComputerVision(string imageUrl)
