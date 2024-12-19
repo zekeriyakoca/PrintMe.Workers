@@ -7,17 +7,17 @@ namespace PrintMe.Workers.Services;
 
 public class OpenAIChatGpt4ImageDescriptionService : IImageDescriptionService
 {
-    private readonly HttpClient _openAIClient;
+    private readonly HttpClient _openAiClient;
     private readonly ILogger<OpenAIChatGpt4ImageDescriptionService> _logger;
 
-    public OpenAIChatGpt4ImageDescriptionService(HttpClient openAIClient, ILogger<OpenAIChatGpt4ImageDescriptionService> logger, IConfiguration configuration)
+    public OpenAIChatGpt4ImageDescriptionService(HttpClient openAiClient, ILogger<OpenAIChatGpt4ImageDescriptionService> logger, IConfiguration configuration)
     {
-        _openAIClient = openAIClient;
-        _openAIClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {configuration["OpenAIKey"]}");
+        _openAiClient = openAiClient;
+        _openAiClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {configuration["OpenAIKey"]}");
         _logger = logger;
     }
 
-    public async Task<ImageDefinition> DescribeImage(string analyzeOfImage, string descriptionOfImage, string imageBase64, int retryCount = 0)
+    public async Task<ImageDefinition> DescribeImage(string analyzeOfImage, string descriptionOfImage, string imageUrl, int retryCount = 0)
     {
         _logger.LogInformation("Parameters for request of openAI model = analyzeOfImage: {analyzeOfImage}, descriptionOfImage: {descriptionOfImage}", analyzeOfImage,
             descriptionOfImage);
@@ -28,8 +28,9 @@ public class OpenAIChatGpt4ImageDescriptionService : IImageDescriptionService
             top_p= 1,
             messages = new dynamic[]
             {
-                new { role = "system", content = new dynamic[] { new { type = "text", text = "You are an expert in image recognition and description." } } },
-                new { role = "user", content = new dynamic[] { new { type = "text", text = ImageDescriptionConstants.GetPromptForImage(descriptionOfImage) }, new { type = "image_url", image_url = new { url = imageBase64} } } },
+                new { role = "system", content = "You are an expert in image recognition and description." },
+                new { role = "user", content = ImageDescriptionConstants.GetPromptForImage(descriptionOfImage) },
+                new { role = "user", content =  new { type = "image_url", image_url = new { url = imageUrl} } }
             },
             max_tokens = 500,
             temperature = 0.1
@@ -39,23 +40,23 @@ public class OpenAIChatGpt4ImageDescriptionService : IImageDescriptionService
 
         try
         {
-            var response = await _openAIClient.PostAsync("https://api.openai.com/v1/chat/completions", requestContent);
+            var response = await _openAiClient.PostAsync("https://api.openai.com/v1/chat/completions", requestContent);
             var responseContent = await response.Content.ReadAsStringAsync();
             var completionResponse = JsonConvert.DeserializeObject<ChatResponse>(responseContent);
 
-            if (completionResponse?.Error != null)
+            if (completionResponse == null || completionResponse?.Error != null)
             {
-                _logger.LogError($"Error response from openAI model: {completionResponse.Error}");
+                _logger.LogError($"Error response from openAI model: {completionResponse!.Error}");
                 if (retryCount >= 3)
                 {
                     throw new Exception("Unable to get response from openAI model after 3 retries.");
                 }
 
                 _logger.LogWarning($"Retrying : {retryCount}/3");
-                return await DescribeImage(analyzeOfImage, descriptionOfImage, imageBase64, retryCount + 1);
+                return await DescribeImage(analyzeOfImage, descriptionOfImage, imageUrl, retryCount + 1);
             }
 
-            if (completionResponse.Choices.Count > 0)
+            if (completionResponse!.Choices.Count > 0)
             {
                 try
                 {

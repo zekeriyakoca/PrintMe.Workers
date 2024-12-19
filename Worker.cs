@@ -171,8 +171,7 @@ public class Worker(
         var mobileOfThumbnail = imageProcessService.ResizeImageTo(originalImage, 420, 420);
         await UploadImage(mobileOfThumbnail, $"printme-processed-images", imageId, $"{imageName}-thumbnail-m");
     }
-
-
+    
     private async Task<string> UploadImage(Image<Rgba32> image, string containerName, string blobFolder, string imageName)
     {
         var containerClient = blobServiceClient.GetBlobContainerClient(containerName);
