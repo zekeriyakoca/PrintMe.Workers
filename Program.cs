@@ -44,6 +44,7 @@ namespace PrintMe.Workers
 
                     // services.AddTransient<IImageDescriptionService, OpenAIGptInstructImageDescriptionService>();
                     services.AddTransient<IImageDescriptionService, OpenAIChatGpt4ImageDescriptionService>();
+                    services.AddTransient<IImageProcessService, ImageProcessService>();
 
                     services.AddHttpClient();
                     services.AddHostedService<Worker>();
