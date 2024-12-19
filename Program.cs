@@ -7,6 +7,7 @@ using Azure.Storage.Blobs;
 using PrintMe.Workers;
 using Azure.Storage.Queues;
 using Microsoft.Extensions.Azure;
+using PrintMe.Workers.Services;
 
 namespace PrintMe.Workers
 {
@@ -41,6 +42,8 @@ namespace PrintMe.Workers
                     
                     services.AddSingleton(sp => new QueueClient(context.Configuration["StorageConnectionString"], "images-to-process"));
 
+                    // services.AddTransient<IImageDescriptionService, OpenAIGptInstructImageDescriptionService>();
+                    services.AddTransient<IImageDescriptionService, OpenAIChatGpt4ImageDescriptionService>();
 
                     services.AddHttpClient();
                     services.AddHostedService<Worker>();
