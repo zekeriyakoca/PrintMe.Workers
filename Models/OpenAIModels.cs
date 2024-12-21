@@ -1,3 +1,4 @@
+using Newtonsoft.Json;
 using PrintMe.Workers.Enums;
 
 namespace PrintMe.Workers.Models;
@@ -44,6 +45,16 @@ public class ErrorResponse
         return String.Join(", ", new string[] { Message, Type, Param, Code });
     }
 }
+
+public record ThreadAndRunCreationResponse(string Id, [JsonProperty("thread_id")]string ThreadId);
+
+public record ThreadMessagesResponse(List<ThreadMessageDto> Data);
+
+public record ThreadMessageDto( string Id, ThreadMessageContentDto[] Content);
+
+public record ThreadMessageContentDto(ThreadMessageContentAsTextDto Text);
+
+public record ThreadMessageContentAsTextDto(string Value, string[] Annotations);
 
 public class ImageDefinition
 {

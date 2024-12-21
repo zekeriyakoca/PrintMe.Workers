@@ -30,7 +30,7 @@ public class OpenAIChatGpt4ImageDescriptionService : IImageDescriptionService
             {
                 new { role = "system", content = "You are an expert in image recognition and description." },
                 new { role = "user", content = ImageDescriptionConstants.GetPromptForImage(descriptionOfImage) },
-                new { role = "user", content =  new { type = "image_url", image_url = new { url = imageUrl} } }
+                new { role = "user", content = new dynamic[] { new { type = "image_url", image_url = new { url = imageUrl } } } }
             },
             max_tokens = 500,
             temperature = 0.1
