@@ -54,4 +54,6 @@ public class CatalogItem
     /// </summary>
     public bool OnReorder { get; set; }
     
+    public bool IsHorizontal { get; set; } = false;
+    
 }

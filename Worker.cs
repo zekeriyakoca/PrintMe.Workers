@@ -33,9 +33,9 @@ public class Worker(
                 logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
             }
 
-            await ProcessTestMessage();
+            // await ProcessTestMessage();
 
-            // await ProcessMessagesInQueue(stoppingToken);
+            await ProcessMessagesInQueue(stoppingToken);
 
             await Task.Delay(1000 * 15, stoppingToken);
         }
@@ -70,7 +70,14 @@ public class Worker(
         {
             foreach (QueueMessage message in messages)
             {
-                await ProcessMessage(message.MessageText);
+                try
+                {
+                    await ProcessMessage(message.MessageText);
+                }
+                catch (UnknownImageFormatException e) // Surpussing UnknownImageFormatException exeption
+                {
+                    logger.LogError(e, "Couldn't process message due to invalid image format: {message}", JsonConvert.SerializeObject(message));
+                }
 
                 // Delete the message after processing
                 await queueClient.DeleteMessageAsync(message.MessageId, message.PopReceipt, stoppingToken);
@@ -129,7 +136,8 @@ public class Worker(
             SearchParameters = imageDefinition.Description,
             OriginalImageWidth = originalImage.Width,
             OriginalImageHeight = originalImage.Height,
-            Tags = CatalogTags.Featured
+            Tags = CatalogTags.Featured,
+            IsHorizontal = originalImage.Width > originalImage.Height,
         };
 
         product.ProductImages.Add(resizedImageEntity);
@@ -171,7 +179,7 @@ public class Worker(
         var mobileOfThumbnail = imageProcessService.ResizeImageTo(originalImage, 420, 420);
         await UploadImage(mobileOfThumbnail, $"printme-processed-images", imageId, $"{imageName}-thumbnail-m");
     }
-    
+
     private async Task<string> UploadImage(Image<Rgba32> image, string containerName, string blobFolder, string imageName)
     {
         var containerClient = blobServiceClient.GetBlobContainerClient(containerName);

@@ -7,10 +7,10 @@ namespace PrintMe.Workers.Services;
 public class OpenAIAssistentImageDescriptionService : IImageDescriptionService
 {
     private readonly HttpClient _openAiClient;
-    private readonly ILogger<OpenAIChatGpt4ImageDescriptionService> _logger;
+    private readonly ILogger<OpenAIAssistentImageDescriptionService> _logger;
     private readonly string _assistantId;
 
-    public OpenAIAssistentImageDescriptionService(HttpClient openAiClient, ILogger<OpenAIChatGpt4ImageDescriptionService> logger, IConfiguration configuration)
+    public OpenAIAssistentImageDescriptionService(HttpClient openAiClient, ILogger<OpenAIAssistentImageDescriptionService> logger, IConfiguration configuration)
     {
         _openAiClient = openAiClient;
         _openAiClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {configuration["OpenAIKey"]}");
@@ -28,7 +28,7 @@ public class OpenAIAssistentImageDescriptionService : IImageDescriptionService
         {
             var threadId = await CreateNewThreadAndRun(descriptionOfImage, imageUrl);
 
-            Thread.Sleep(2000); // Wait a bit to give AI some time to respond
+            Thread.Sleep(10000); // Wait a bit to give AI some time to respond
 
             var assistantResponse = await FetchAssistantResponse(0, threadId);
 
